@@ -1,0 +1,27 @@
+[package]
+name = "crabtrack"
+version = "0.2.1"
+edition = "2024"
+
+[dependencies]
+# Satellite tracking
+sgp4 = "2.3"
+
+# Time handling
+chrono = "0.4"
+hifitime = "3.9"
+
+# Configuration
+serde = { version = "1.0", features = ["derive"] }
+toml = "0.8"
+
+# TUI
+ratatui = "0.26"
+crossterm = "0.27"
+
+# Math
+nalgebra = "0.32"
+
+# Error handling
+anyhow = "1.0"
+thiserror = "1.0"

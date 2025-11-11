@@ -1,0 +1,51 @@
+[observer]
+name = "Cape Canaveral"
+latitude = 28.4740    # degrees North
+longitude = -80.5772  # degrees West
+altitude = 10.0       # meters above sea level
+
+[satellites]
+tle_file = "./data/satellites.tle"
+tracked_satellites = [
+    "ISS (ZARYA)",
+    "NOAA 18",
+    "NOAA 19",
+    "GOOD ANCESTOR KILAKILA",
+    "OSCAR 7",
+    "CUBESAT XI-V",
+    "EYESAT-1"
+]
+max_satellites = 10
+
+[prediction]
+num_passes = 10
+min_elevation = 10.0
+search_days = 3
+time_step = 60.0
+
+[display]
+refresh_rate = 1000
+show_current_position = true
+show_all_positions = true
+# Show sky map
+show_sky_map = true
+
+[radio]
+# Enable radio features
+enabled = true
+# Downlink frequency in MHz (will calculate doppler for this)
+downlink_frequency_mhz = 145.800
+# Uplink frequency in MHz (optional, for full-duplex satellites)
+uplink_frequency_mhz = 435.000
+# Show doppler shift in display
+show_doppler = true
+
+[alerts]
+# Enable alert notifications
+enabled = true
+# Alert before pass starts (minutes)
+alert_before_pass = 5
+# Minimum elevation for alerts (degrees)
+min_elevation_for_alert = 20.0
+# Play sound (if supported)
+play_sound = false
