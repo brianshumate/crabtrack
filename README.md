@@ -40,3 +40,4 @@ Not yet, but you can build it fromm source like this:
    ```shell
    cargo run --release
    ```
+<img width="1200" height="987" alt="crabtrack-1" src="https://github.com/user-attachments/assets/8d26d6a5-2a49-426b-be8b-884d637f559f" />
