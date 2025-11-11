@@ -2,7 +2,8 @@
 
 ## Data fetching
 
-Get TLE data from Celestrak from the app
+- Get TLE data from Celestrak from the app
+- Schedule data fetching from Celestrak
 
 ## Database support
 
