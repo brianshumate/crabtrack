@@ -1,20 +1,14 @@
 # CrabTrack roadmap
 
-## Error handling
+## Data
 
-- Handle errors with configuration
-- Handle errors when fetching data from Celestrak
-- Handle errors when parsing TLE data
-- Handle errors when storing/retrieving data with DuckDB
-
-## Data fetching
-
-- Get TLE data from Celestrak from the app
-- Schedule data fetching from Celestrak
+- [] Get TLE data from Celestrak from the app
+- [] Schedule data fetching from Celestrak
+- [] Export passes as CSV or Markdown table
 
 ## Database support
 
-- Use DuckDB to store TLE data matched to per-satellite information like:
+- [] Use DuckDB to store TLE data matched to per-satellite information like:
   - Name
   - Launch date
   - Launch site
@@ -24,3 +18,14 @@
   - Radio frequency downlink
   - Radio frequency uplink
   - Notes
+
+## UI
+
+- [] Menus: utilities menu
+
+## Error handling
+
+- [✓] Handle errors with configuration
+- [] Handle errors when fetching data from Celestrak
+- [] Handle errors when parsing TLE data
+- [] Handle errors when storing/retrieving data with DuckDB
