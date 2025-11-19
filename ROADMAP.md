@@ -1,5 +1,12 @@
 # CrabTrack roadmap
 
+## Error handling
+
+- Handle errors with configuration
+- Handle errors when fetching data from Celestrak
+- Handle errors when parsing TLE data
+- Handle errors when storing/retrieving data with DuckDB
+
 ## Data fetching
 
 - Get TLE data from Celestrak from the app
