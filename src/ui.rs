@@ -23,12 +23,12 @@ pub fn draw_ui(f: &mut Frame, app_state: &AppState) {
                 Constraint::Percentage(60), // Left side (info)
                 Constraint::Percentage(40), // Right side (sky map + details)
             ])
-            .split(f.size())
+            .split(f.area())
     } else {
         Layout::default()
             .direction(Direction::Horizontal)
             .constraints([Constraint::Percentage(100)])
-            .split(f.size())
+            .split(f.area())
     };
 
     // Left side layout

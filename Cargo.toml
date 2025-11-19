@@ -1,6 +1,6 @@
 [package]
 name = "crabtrack"
-version = "0.2.2"
+version = "0.2.3"
 edition = "2024"
 
 [dependencies]
@@ -8,20 +8,20 @@ edition = "2024"
 sgp4 = "2.3"
 
 # Time handling
-chrono = "0.4"
-hifitime = "3.9"
+chrono = "0.4.42"
+hifitime = "4.2.3"
 
 # Configuration
 serde = { version = "1.0", features = ["derive"] }
 toml = "0.8"
 
 # TUI
-ratatui = "0.26"
-crossterm = "0.27"
+ratatui = "0.29"
+crossterm = "0.29"
 
 # Math
-nalgebra = "0.32"
+nalgebra = "0.34.1"
 
 # Error handling
-anyhow = "1.0"
-thiserror = "1.0"
+anyhow = "1.0.100"
+thiserror = "2.0.17"
