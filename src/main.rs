@@ -42,7 +42,19 @@ struct Alert {
 
 fn main() -> Result<()> {
     // Load configuration
-    let config = Config::load("config.toml")?;
+    let config = match Config::load("config.toml") {
+        Ok(cfg) => cfg,
+        Err(e) => {
+            eprintln!("\nError: Could not load configuration file 'config.toml'");
+            eprintln!("   Reason: {}\n", e);
+            eprintln!("   To fix this issue:");
+            eprintln!("   1. Copy the example configuration file:");
+            eprintln!("      cp example.config.toml config.toml");
+            eprintln!("   2. Edit config.toml with your location and preferences");
+            eprintln!("   3. Run the program again\n");
+            std::process::exit(1);
+        }
+    };
 
     // Create observer
     let observer = Observer::new(
