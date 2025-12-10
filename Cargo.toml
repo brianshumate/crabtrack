@@ -25,3 +25,9 @@ nalgebra = "0.34.1"
 # Error handling
 anyhow = "1.0.100"
 thiserror = "2.0.17"
+
+# Database
+duckdb = { version = "1.1", features = ["bundled"] }
+
+# Platform directories
+dirs = "5.0"

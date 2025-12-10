@@ -1,9 +1,12 @@
 mod config;
+mod database;
 mod observer;
 mod pass_prediction;
 mod radio;
 mod satellite;
 mod ui;
+
+use database::{Database, SatelliteDetails};
 
 use anyhow::Result;
 use chrono::{DateTime, Duration, Utc};
@@ -22,22 +25,191 @@ use pass_prediction::{calculate_gmst, calculate_look_angles, SatellitePass};
 use radio::{calculate_doppler_shift, evaluate_communication_window};
 use satellite::{Satellite, SatellitePosition};
 
-struct AppState {
-    satellites: Vec<Satellite>,
-    current_positions: Vec<SatellitePosition>,
-    selected_satellite: usize,
-    observer: Observer,
-    config: Config,
-    alerts: Vec<Alert>,
+/// Application view mode
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum AppMode {
+    Normal,
+    SatelliteConfig,
+}
+
+/// Editing mode for satellite configuration
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ConfigEditMode {
+    List,
+    Edit,
+    Add,
+}
+
+/// Field being edited in satellite config
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum ConfigField {
+    Name,
+    TleLine1,
+    TleLine2,
+    LaunchDate,
+    LaunchSite,
+    CountryOfOrigin,
+    Operator,
+    SatelliteType,
+    DownlinkFrequency,
+    UplinkFrequency,
+    Notes,
+}
+
+impl ConfigField {
+    fn next(&self) -> Self {
+        match self {
+            ConfigField::Name => ConfigField::TleLine1,
+            ConfigField::TleLine1 => ConfigField::TleLine2,
+            ConfigField::TleLine2 => ConfigField::LaunchDate,
+            ConfigField::LaunchDate => ConfigField::LaunchSite,
+            ConfigField::LaunchSite => ConfigField::CountryOfOrigin,
+            ConfigField::CountryOfOrigin => ConfigField::Operator,
+            ConfigField::Operator => ConfigField::SatelliteType,
+            ConfigField::SatelliteType => ConfigField::DownlinkFrequency,
+            ConfigField::DownlinkFrequency => ConfigField::UplinkFrequency,
+            ConfigField::UplinkFrequency => ConfigField::Notes,
+            ConfigField::Notes => ConfigField::Name,
+        }
+    }
+
+    fn prev(&self) -> Self {
+        match self {
+            ConfigField::Name => ConfigField::Notes,
+            ConfigField::TleLine1 => ConfigField::Name,
+            ConfigField::TleLine2 => ConfigField::TleLine1,
+            ConfigField::LaunchDate => ConfigField::TleLine2,
+            ConfigField::LaunchSite => ConfigField::LaunchDate,
+            ConfigField::CountryOfOrigin => ConfigField::LaunchSite,
+            ConfigField::Operator => ConfigField::CountryOfOrigin,
+            ConfigField::SatelliteType => ConfigField::Operator,
+            ConfigField::DownlinkFrequency => ConfigField::SatelliteType,
+            ConfigField::UplinkFrequency => ConfigField::DownlinkFrequency,
+            ConfigField::Notes => ConfigField::UplinkFrequency,
+        }
+    }
+
+    fn label(&self) -> &'static str {
+        match self {
+            ConfigField::Name => "Name",
+            ConfigField::TleLine1 => "TLE Line 1",
+            ConfigField::TleLine2 => "TLE Line 2",
+            ConfigField::LaunchDate => "Launch Date",
+            ConfigField::LaunchSite => "Launch Site",
+            ConfigField::CountryOfOrigin => "Country",
+            ConfigField::Operator => "Operator",
+            ConfigField::SatelliteType => "Type",
+            ConfigField::DownlinkFrequency => "Downlink (MHz)",
+            ConfigField::UplinkFrequency => "Uplink (MHz)",
+            ConfigField::Notes => "Notes",
+        }
+    }
+}
+
+/// State for satellite configuration screen
+pub struct SatelliteConfigState {
+    pub satellites: Vec<SatelliteDetails>,
+    pub selected_index: usize,
+    pub edit_mode: ConfigEditMode,
+    pub current_field: ConfigField,
+    pub editing_satellite: SatelliteDetails,
+    pub input_buffer: String,
+    pub status_message: Option<String>,
+}
+
+impl SatelliteConfigState {
+    fn new() -> Self {
+        Self {
+            satellites: Vec::new(),
+            selected_index: 0,
+            edit_mode: ConfigEditMode::List,
+            current_field: ConfigField::Name,
+            editing_satellite: SatelliteDetails::default(),
+            input_buffer: String::new(),
+            status_message: None,
+        }
+    }
+
+    fn load_from_database(&mut self, db: &Database) -> Result<()> {
+        self.satellites = db.read_all()?;
+        if self.selected_index >= self.satellites.len() && !self.satellites.is_empty() {
+            self.selected_index = self.satellites.len() - 1;
+        }
+        Ok(())
+    }
+
+    fn get_field_value(&self, field: ConfigField) -> String {
+        match field {
+            ConfigField::Name => self.editing_satellite.name.clone(),
+            ConfigField::TleLine1 => self.editing_satellite.tle_line1.clone(),
+            ConfigField::TleLine2 => self.editing_satellite.tle_line2.clone(),
+            ConfigField::LaunchDate => self.editing_satellite.launch_date.clone().unwrap_or_default(),
+            ConfigField::LaunchSite => self.editing_satellite.launch_site.clone().unwrap_or_default(),
+            ConfigField::CountryOfOrigin => self.editing_satellite.country_of_origin.clone().unwrap_or_default(),
+            ConfigField::Operator => self.editing_satellite.operator.clone().unwrap_or_default(),
+            ConfigField::SatelliteType => self.editing_satellite.satellite_type.clone().unwrap_or_default(),
+            ConfigField::DownlinkFrequency => self.editing_satellite.downlink_frequency_mhz
+                .map(|f| format!("{:.3}", f))
+                .unwrap_or_default(),
+            ConfigField::UplinkFrequency => self.editing_satellite.uplink_frequency_mhz
+                .map(|f| format!("{:.3}", f))
+                .unwrap_or_default(),
+            ConfigField::Notes => self.editing_satellite.notes.clone().unwrap_or_default(),
+        }
+    }
+
+    fn set_field_value(&mut self, field: ConfigField, value: String) {
+        match field {
+            ConfigField::Name => self.editing_satellite.name = value,
+            ConfigField::TleLine1 => self.editing_satellite.tle_line1 = value,
+            ConfigField::TleLine2 => self.editing_satellite.tle_line2 = value,
+            ConfigField::LaunchDate => {
+                self.editing_satellite.launch_date = if value.is_empty() { None } else { Some(value) }
+            }
+            ConfigField::LaunchSite => {
+                self.editing_satellite.launch_site = if value.is_empty() { None } else { Some(value) }
+            }
+            ConfigField::CountryOfOrigin => {
+                self.editing_satellite.country_of_origin = if value.is_empty() { None } else { Some(value) }
+            }
+            ConfigField::Operator => {
+                self.editing_satellite.operator = if value.is_empty() { None } else { Some(value) }
+            }
+            ConfigField::SatelliteType => {
+                self.editing_satellite.satellite_type = if value.is_empty() { None } else { Some(value) }
+            }
+            ConfigField::DownlinkFrequency => {
+                self.editing_satellite.downlink_frequency_mhz = value.parse().ok()
+            }
+            ConfigField::UplinkFrequency => {
+                self.editing_satellite.uplink_frequency_mhz = value.parse().ok()
+            }
+            ConfigField::Notes => {
+                self.editing_satellite.notes = if value.is_empty() { None } else { Some(value) }
+            }
+        }
+    }
+}
+
+pub struct AppState {
+    pub satellites: Vec<Satellite>,
+    pub current_positions: Vec<SatellitePosition>,
+    pub selected_satellite: usize,
+    pub observer: Observer,
+    pub config: Config,
+    pub alerts: Vec<Alert>,
+    pub mode: AppMode,
+    pub sat_config_state: SatelliteConfigState,
+    pub database: Database,
 }
 
 #[derive(Clone, Debug)]
-struct Alert {
-    satellite_name: String,
-    pass: SatellitePass,
-    time_until_minutes: i64,
+pub struct Alert {
+    pub satellite_name: String,
+    pub pass: SatellitePass,
+    pub time_until_minutes: i64,
     #[allow(dead_code)]
-    shown: bool,
+    pub shown: bool,
 }
 
 fn main() -> Result<()> {
@@ -110,6 +282,26 @@ fn main() -> Result<()> {
         }
     }
 
+    // Initialize database
+    let db_path = dirs::data_local_dir()
+        .unwrap_or_else(|| std::path::PathBuf::from("."))
+        .join("crabtrack")
+        .join("satellites.db");
+
+    // Ensure the directory exists
+    if let Some(parent) = db_path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+
+    let database = Database::open(&db_path)?;
+    println!("Database initialized at: {}", db_path.display());
+
+    // Load satellite config state from database
+    let mut sat_config_state = SatelliteConfigState::new();
+    if let Err(e) = sat_config_state.load_from_database(&database) {
+        eprintln!("Warning: Could not load satellite details from database: {}", e);
+    }
+
     let mut app_state = AppState {
         satellites,
         current_positions,
@@ -117,6 +309,9 @@ fn main() -> Result<()> {
         observer,
         config,
         alerts: Vec::new(),
+        mode: AppMode::Normal,
+        sat_config_state,
+        database,
     };
 
     // Setup terminal
@@ -377,61 +572,209 @@ fn run_app(
     app_state: &mut AppState,
 ) -> Result<()> {
     loop {
-        // Update current positions
-        let now = Utc::now();
-        app_state.current_positions = app_state
-            .satellites
-            .iter()
-            .filter_map(|sat| sat.calculate_position(now, &app_state.observer).ok())
-            .collect();
+        match app_state.mode {
+            AppMode::Normal => {
+                // Update current positions
+                let now = Utc::now();
+                app_state.current_positions = app_state
+                    .satellites
+                    .iter()
+                    .filter_map(|sat| sat.calculate_position(now, &app_state.observer).ok())
+                    .collect();
 
-        // Add radio calculations if enabled
-        if app_state.config.radio.enabled {
-            for pos in app_state.current_positions.iter_mut() {
-                pos.doppler = Some(calculate_doppler_shift(
-                    pos,
-                    app_state.config.radio.downlink_frequency_mhz,
-                    app_state.config.radio.uplink_frequency_mhz,
-                ));
-                pos.comm_window = Some(evaluate_communication_window(pos));
+                // Add radio calculations if enabled
+                if app_state.config.radio.enabled {
+                    for pos in app_state.current_positions.iter_mut() {
+                        pos.doppler = Some(calculate_doppler_shift(
+                            pos,
+                            app_state.config.radio.downlink_frequency_mhz,
+                            app_state.config.radio.uplink_frequency_mhz,
+                        ));
+                        pos.comm_window = Some(evaluate_communication_window(pos));
+                    }
+                }
+
+                // Update alerts
+                update_alerts(app_state);
+
+                terminal.draw(|f| {
+                    ui::draw_ui(f, app_state);
+                })?;
+
+                // Handle input for normal mode
+                if event::poll(std::time::Duration::from_millis(
+                    app_state.config.display.refresh_rate,
+                ))? {
+                    if let Event::Key(key) = event::read()? {
+                        match key.code {
+                            KeyCode::Char('q') | KeyCode::Esc => {
+                                return Ok(());
+                            }
+                            KeyCode::Char('c') => {
+                                // Enter satellite configuration mode
+                                if let Err(e) = app_state.sat_config_state.load_from_database(&app_state.database) {
+                                    eprintln!("Error loading satellite config: {}", e);
+                                }
+                                app_state.mode = AppMode::SatelliteConfig;
+                            }
+                            KeyCode::Up | KeyCode::Char('k') => {
+                                if app_state.selected_satellite > 0 {
+                                    app_state.selected_satellite -= 1;
+                                }
+                            }
+                            KeyCode::Down | KeyCode::Char('j') => {
+                                if app_state.selected_satellite < app_state.satellites.len() - 1 {
+                                    app_state.selected_satellite += 1;
+                                }
+                            }
+                            KeyCode::Home => {
+                                app_state.selected_satellite = 0;
+                            }
+                            KeyCode::End => {
+                                app_state.selected_satellite = app_state.satellites.len() - 1;
+                            }
+                            _ => {}
+                        }
+                    }
+                }
             }
-        }
+            AppMode::SatelliteConfig => {
+                terminal.draw(|f| {
+                    ui::draw_satellite_config(f, app_state);
+                })?;
 
-        // Update alerts
-        update_alerts(app_state);
-
-        terminal.draw(|f| {
-            ui::draw_ui(f, app_state);
-        })?;
-
-        // Handle input
-        if event::poll(std::time::Duration::from_millis(
-            app_state.config.display.refresh_rate,
-        ))? {
-            if let Event::Key(key) = event::read()? {
-                match key.code {
-                    KeyCode::Char('q') | KeyCode::Esc => {
-                        return Ok(());
+                // Handle input for satellite config mode
+                if event::poll(std::time::Duration::from_millis(100))? {
+                    if let Event::Key(key) = event::read()? {
+                        handle_satellite_config_input(app_state, key.code)?;
                     }
-                    KeyCode::Up | KeyCode::Char('k') => {
-                        if app_state.selected_satellite > 0 {
-                            app_state.selected_satellite -= 1;
-                        }
-                    }
-                    KeyCode::Down | KeyCode::Char('j') => {
-                        if app_state.selected_satellite < app_state.satellites.len() - 1 {
-                            app_state.selected_satellite += 1;
-                        }
-                    }
-                    KeyCode::Home => {
-                        app_state.selected_satellite = 0;
-                    }
-                    KeyCode::End => {
-                        app_state.selected_satellite = app_state.satellites.len() - 1;
-                    }
-                    _ => {}
                 }
             }
         }
     }
+}
+
+fn handle_satellite_config_input(app_state: &mut AppState, key: KeyCode) -> Result<()> {
+    let state = &mut app_state.sat_config_state;
+
+    match state.edit_mode {
+        ConfigEditMode::List => {
+            match key {
+                KeyCode::Esc | KeyCode::Char('q') => {
+                    // Return to normal mode
+                    app_state.mode = AppMode::Normal;
+                }
+                KeyCode::Up | KeyCode::Char('k') => {
+                    if state.selected_index > 0 {
+                        state.selected_index -= 1;
+                    }
+                }
+                KeyCode::Down | KeyCode::Char('j') => {
+                    if state.selected_index < state.satellites.len().saturating_sub(1) {
+                        state.selected_index += 1;
+                    }
+                }
+                KeyCode::Enter | KeyCode::Char('e') => {
+                    // Edit selected satellite
+                    if !state.satellites.is_empty() {
+                        state.editing_satellite = state.satellites[state.selected_index].clone();
+                        state.current_field = ConfigField::Name;
+                        state.input_buffer = state.get_field_value(state.current_field);
+                        state.edit_mode = ConfigEditMode::Edit;
+                    }
+                }
+                KeyCode::Char('a') => {
+                    // Add new satellite
+                    state.editing_satellite = SatelliteDetails::default();
+                    state.current_field = ConfigField::Name;
+                    state.input_buffer.clear();
+                    state.edit_mode = ConfigEditMode::Add;
+                }
+                KeyCode::Char('d') | KeyCode::Delete => {
+                    // Delete selected satellite
+                    if !state.satellites.is_empty() {
+                        let sat = &state.satellites[state.selected_index];
+                        if let Some(id) = sat.id {
+                            if app_state.database.delete(id).is_ok() {
+                                state.status_message = Some(format!("Deleted: {}", sat.name));
+                                let _ = state.load_from_database(&app_state.database);
+                            } else {
+                                state.status_message = Some("Failed to delete satellite".to_string());
+                            }
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+        ConfigEditMode::Edit | ConfigEditMode::Add => {
+            match key {
+                KeyCode::Esc => {
+                    // Cancel edit and return to list
+                    state.edit_mode = ConfigEditMode::List;
+                    state.status_message = Some("Edit cancelled".to_string());
+                }
+                KeyCode::Tab => {
+                    // Save current field and move to next
+                    state.set_field_value(state.current_field, state.input_buffer.clone());
+                    state.current_field = state.current_field.next();
+                    state.input_buffer = state.get_field_value(state.current_field);
+                }
+                KeyCode::BackTab => {
+                    // Save current field and move to previous
+                    state.set_field_value(state.current_field, state.input_buffer.clone());
+                    state.current_field = state.current_field.prev();
+                    state.input_buffer = state.get_field_value(state.current_field);
+                }
+                KeyCode::Up => {
+                    // Save current field and move to previous
+                    state.set_field_value(state.current_field, state.input_buffer.clone());
+                    state.current_field = state.current_field.prev();
+                    state.input_buffer = state.get_field_value(state.current_field);
+                }
+                KeyCode::Down => {
+                    // Save current field and move to next
+                    state.set_field_value(state.current_field, state.input_buffer.clone());
+                    state.current_field = state.current_field.next();
+                    state.input_buffer = state.get_field_value(state.current_field);
+                }
+                KeyCode::Enter => {
+                    // Save current field value
+                    state.set_field_value(state.current_field, state.input_buffer.clone());
+
+                    // Save to database
+                    if state.editing_satellite.name.is_empty() {
+                        state.status_message = Some("Error: Name is required".to_string());
+                    } else {
+                        let result = if state.edit_mode == ConfigEditMode::Add {
+                            app_state.database.create(&state.editing_satellite)
+                        } else {
+                            app_state.database.update(&state.editing_satellite)
+                                .map(|_| state.editing_satellite.id.unwrap_or(0))
+                        };
+
+                        match result {
+                            Ok(_) => {
+                                state.status_message = Some(format!("Saved: {}", state.editing_satellite.name));
+                                let _ = state.load_from_database(&app_state.database);
+                                state.edit_mode = ConfigEditMode::List;
+                            }
+                            Err(e) => {
+                                state.status_message = Some(format!("Error saving: {}", e));
+                            }
+                        }
+                    }
+                }
+                KeyCode::Char(c) => {
+                    state.input_buffer.push(c);
+                }
+                KeyCode::Backspace => {
+                    state.input_buffer.pop();
+                }
+                _ => {}
+            }
+        }
+    }
+
+    Ok(())
 }

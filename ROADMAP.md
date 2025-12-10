@@ -8,7 +8,7 @@
 
 ## Database support
 
-- [] Use DuckDB to store TLE data matched to per-satellite information like:
+- [✓] Use DuckDB to store TLE data matched to per-satellite information like:
   - Name
   - Launch date
   - Launch site

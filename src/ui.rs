@@ -3,12 +3,12 @@ use ratatui::{
     layout::{Alignment, Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, Cell, Paragraph, Row, Table},
+    widgets::{Block, Borders, Cell, Clear, Paragraph, Row, Table},
     Frame,
 };
 
 use crate::radio::SignalStrength;
-use crate::AppState;
+use crate::{AppState, ConfigEditMode, ConfigField};
 
 pub fn draw_ui(f: &mut Frame, app_state: &AppState) {
     let has_alerts = !app_state.alerts.is_empty();
@@ -866,11 +866,320 @@ fn azimuth_to_cardinal(azimuth: f64) -> &'static str {
 
 fn draw_footer(f: &mut Frame, area: Rect) {
     let footer = Paragraph::new(
-        "↑/↓ or j/k: Select satellite | q/ESC: Quit | Home/End: First/Last satellite",
+        "↑/↓ or j/k: Select | c: Satellite Config | q/ESC: Quit | Home/End: First/Last",
     )
     .style(Style::default().fg(Color::Gray))
     .alignment(Alignment::Center)
     .block(Block::default().borders(Borders::ALL));
 
     f.render_widget(footer, area);
+}
+
+/// Draw the satellite configuration screen
+pub fn draw_satellite_config(f: &mut Frame, app_state: &AppState) {
+    let state = &app_state.sat_config_state;
+
+    // Create centered area for the config window
+    let area = centered_rect(90, 90, f.area());
+
+    // Clear the area behind the popup
+    f.render_widget(Clear, area);
+
+    match state.edit_mode {
+        ConfigEditMode::List => {
+            draw_satellite_list(f, area, app_state);
+        }
+        ConfigEditMode::Edit | ConfigEditMode::Add => {
+            draw_satellite_edit_form(f, area, app_state);
+        }
+    }
+}
+
+/// Draw the satellite list view
+fn draw_satellite_list(f: &mut Frame, area: Rect, app_state: &AppState) {
+    let state = &app_state.sat_config_state;
+
+    // Split into header, content, and footer
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(3), // Header
+            Constraint::Min(10),   // Content
+            Constraint::Length(3), // Status
+            Constraint::Length(3), // Footer
+        ])
+        .split(area);
+
+    // Header
+    let header = Paragraph::new(Line::from(vec![
+        Span::styled(
+            "Satellite Configuration",
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        ),
+        Span::raw(format!(" ({} satellites)", state.satellites.len())),
+    ]))
+    .alignment(Alignment::Center)
+    .block(
+        Block::default()
+            .borders(Borders::ALL)
+            .style(Style::default().fg(Color::White)),
+    );
+    f.render_widget(header, chunks[0]);
+
+    // Satellite list
+    if state.satellites.is_empty() {
+        let empty_msg = Paragraph::new("No satellites configured. Press 'a' to add a new satellite.")
+            .alignment(Alignment::Center)
+            .style(Style::default().fg(Color::Gray))
+            .block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .title("Satellites")
+                    .style(Style::default().fg(Color::White)),
+            );
+        f.render_widget(empty_msg, chunks[1]);
+    } else {
+        let header_cells = [
+            "Name",
+            "Type",
+            "Country",
+            "Operator",
+            "Downlink",
+            "Uplink",
+        ]
+        .iter()
+        .map(|h| {
+            Cell::from(*h).style(
+                Style::default()
+                    .fg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD),
+            )
+        });
+
+        let header_row = Row::new(header_cells).height(1).bottom_margin(1);
+
+        let rows = state.satellites.iter().enumerate().map(|(idx, sat)| {
+            let is_selected = idx == state.selected_index;
+            let style = if is_selected {
+                Style::default()
+                    .fg(Color::Cyan)
+                    .add_modifier(Modifier::BOLD)
+            } else {
+                Style::default()
+            };
+
+            let cells = vec![
+                Cell::from(truncate_string(&sat.name, 20)),
+                Cell::from(truncate_string(
+                    sat.satellite_type.as_deref().unwrap_or("-"),
+                    15,
+                )),
+                Cell::from(truncate_string(
+                    sat.country_of_origin.as_deref().unwrap_or("-"),
+                    12,
+                )),
+                Cell::from(truncate_string(
+                    sat.operator.as_deref().unwrap_or("-"),
+                    15,
+                )),
+                Cell::from(
+                    sat.downlink_frequency_mhz
+                        .map(|f| format!("{:.3}", f))
+                        .unwrap_or_else(|| "-".to_string()),
+                ),
+                Cell::from(
+                    sat.uplink_frequency_mhz
+                        .map(|f| format!("{:.3}", f))
+                        .unwrap_or_else(|| "-".to_string()),
+                ),
+            ];
+
+            Row::new(cells).height(1).style(style)
+        });
+
+        let table = Table::new(
+            rows,
+            [
+                Constraint::Length(22),
+                Constraint::Length(17),
+                Constraint::Length(14),
+                Constraint::Length(17),
+                Constraint::Length(12),
+                Constraint::Length(12),
+            ],
+        )
+        .header(header_row)
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title("Satellites")
+                .style(Style::default().fg(Color::White)),
+        );
+
+        f.render_widget(table, chunks[1]);
+    }
+
+    // Status message
+    let status_text = state
+        .status_message
+        .as_deref()
+        .unwrap_or("");
+    let status = Paragraph::new(status_text)
+        .style(Style::default().fg(Color::Yellow))
+        .alignment(Alignment::Center)
+        .block(Block::default().borders(Borders::ALL));
+    f.render_widget(status, chunks[2]);
+
+    // Footer with keybindings
+    let footer = Paragraph::new(
+        "a: Add | e/Enter: Edit | d/Del: Delete | ↑/↓: Navigate | q/ESC: Back",
+    )
+    .style(Style::default().fg(Color::Gray))
+    .alignment(Alignment::Center)
+    .block(Block::default().borders(Borders::ALL));
+    f.render_widget(footer, chunks[3]);
+}
+
+/// Draw the edit form for satellite details
+fn draw_satellite_edit_form(f: &mut Frame, area: Rect, app_state: &AppState) {
+    let state = &app_state.sat_config_state;
+
+    let title = if state.edit_mode == ConfigEditMode::Add {
+        "Add New Satellite"
+    } else {
+        "Edit Satellite"
+    };
+
+    // Split into header, form fields, and footer
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(3),  // Header
+            Constraint::Min(15),    // Form fields
+            Constraint::Length(3),  // Status
+            Constraint::Length(3),  // Footer
+        ])
+        .split(area);
+
+    // Header
+    let header = Paragraph::new(title)
+        .style(
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        )
+        .alignment(Alignment::Center)
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .style(Style::default().fg(Color::White)),
+        );
+    f.render_widget(header, chunks[0]);
+
+    // Form fields
+    let fields = [
+        ConfigField::Name,
+        ConfigField::TleLine1,
+        ConfigField::TleLine2,
+        ConfigField::LaunchDate,
+        ConfigField::LaunchSite,
+        ConfigField::CountryOfOrigin,
+        ConfigField::Operator,
+        ConfigField::SatelliteType,
+        ConfigField::DownlinkFrequency,
+        ConfigField::UplinkFrequency,
+        ConfigField::Notes,
+    ];
+
+    let field_lines: Vec<Line> = fields
+        .iter()
+        .map(|field| {
+            let is_current = *field == state.current_field;
+            let value = if is_current {
+                format!("{}|", state.input_buffer)
+            } else {
+                state.get_field_value(*field)
+            };
+
+            let label_style = if is_current {
+                Style::default()
+                    .fg(Color::Cyan)
+                    .add_modifier(Modifier::BOLD)
+            } else {
+                Style::default().fg(Color::Yellow)
+            };
+
+            let value_style = if is_current {
+                Style::default()
+                    .fg(Color::White)
+                    .add_modifier(Modifier::BOLD)
+            } else {
+                Style::default().fg(Color::White)
+            };
+
+            let indicator = if is_current { "> " } else { "  " };
+
+            Line::from(vec![
+                Span::styled(indicator, label_style),
+                Span::styled(format!("{:16}", field.label()), label_style),
+                Span::raw(": "),
+                Span::styled(truncate_string(&value, 55), value_style),
+            ])
+        })
+        .collect();
+
+    let form = Paragraph::new(field_lines).block(
+        Block::default()
+            .borders(Borders::ALL)
+            .title("Fields (Tab/↑↓ to navigate)")
+            .style(Style::default().fg(Color::White)),
+    );
+    f.render_widget(form, chunks[1]);
+
+    // Status message
+    let status_text = state.status_message.as_deref().unwrap_or("");
+    let status = Paragraph::new(status_text)
+        .style(Style::default().fg(Color::Yellow))
+        .alignment(Alignment::Center)
+        .block(Block::default().borders(Borders::ALL));
+    f.render_widget(status, chunks[2]);
+
+    // Footer
+    let footer = Paragraph::new("Tab/↑↓: Next/Prev field | Enter: Save | ESC: Cancel")
+        .style(Style::default().fg(Color::Gray))
+        .alignment(Alignment::Center)
+        .block(Block::default().borders(Borders::ALL));
+    f.render_widget(footer, chunks[3]);
+}
+
+/// Helper function to create a centered rect
+fn centered_rect(percent_x: u16, percent_y: u16, r: Rect) -> Rect {
+    let popup_layout = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Percentage((100 - percent_y) / 2),
+            Constraint::Percentage(percent_y),
+            Constraint::Percentage((100 - percent_y) / 2),
+        ])
+        .split(r);
+
+    Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([
+            Constraint::Percentage((100 - percent_x) / 2),
+            Constraint::Percentage(percent_x),
+            Constraint::Percentage((100 - percent_x) / 2),
+        ])
+        .split(popup_layout[1])[1]
+}
+
+/// Helper function to truncate strings for display
+fn truncate_string(s: &str, max_len: usize) -> String {
+    if s.len() <= max_len {
+        s.to_string()
+    } else {
+        format!("{}...", &s[..max_len.saturating_sub(3)])
+    }
 }
