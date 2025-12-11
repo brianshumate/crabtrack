@@ -30,6 +30,94 @@ use satellite::{Satellite, SatellitePosition};
 pub enum AppMode {
     Normal,
     SatelliteConfig,
+    UtilityMenu,
+}
+
+/// Represents a TLE data source from Celestrak
+#[derive(Debug, Clone)]
+pub struct TleSource {
+    pub name: &'static str,
+    pub group: &'static str,
+    pub description: &'static str,
+}
+
+/// Predefined Celestrak TLE sources
+pub const TLE_SOURCES: &[TleSource] = &[
+    TleSource {
+        name: "Space Stations",
+        group: "stations",
+        description: "ISS, CSS, and other space stations",
+    },
+    TleSource {
+        name: "Active Satellites",
+        group: "active",
+        description: "All active satellites",
+    },
+    TleSource {
+        name: "Amateur Radio",
+        group: "amateur",
+        description: "Amateur radio satellites",
+    },
+    TleSource {
+        name: "Weather Satellites",
+        group: "weather",
+        description: "Weather and meteorological",
+    },
+    TleSource {
+        name: "NOAA Satellites",
+        group: "noaa",
+        description: "NOAA weather satellites",
+    },
+    TleSource {
+        name: "GPS Operational",
+        group: "gps-ops",
+        description: "GPS constellation",
+    },
+    TleSource {
+        name: "Starlink",
+        group: "starlink",
+        description: "SpaceX Starlink satellites",
+    },
+    TleSource {
+        name: "Bright/Visual",
+        group: "visual",
+        description: "Visually bright satellites",
+    },
+];
+
+/// Status for the utility menu
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum UtilityMenuStatus {
+    Browsing,
+    Downloading,
+    Success,
+    Error,
+}
+
+/// State for the utility menu
+pub struct UtilityMenuState {
+    pub selected_index: usize,
+    pub status: UtilityMenuStatus,
+    pub status_message: Option<String>,
+    pub downloaded_count: Option<usize>,
+}
+
+impl UtilityMenuState {
+    fn new() -> Self {
+        Self {
+            selected_index: 0,
+            status: UtilityMenuStatus::Browsing,
+            status_message: None,
+            downloaded_count: None,
+        }
+    }
+
+    fn reset(&mut self) {
+        self.selected_index = 0;
+        self.status = UtilityMenuStatus::Browsing;
+        self.status_message = None;
+        self.downloaded_count = None;
+    }
 }
 
 /// Editing mode for satellite configuration
@@ -201,6 +289,7 @@ pub struct AppState {
     pub mode: AppMode,
     pub sat_config_state: SatelliteConfigState,
     pub database: Database,
+    pub utility_menu_state: UtilityMenuState,
 }
 
 #[derive(Clone, Debug)]
@@ -312,6 +401,7 @@ fn main() -> Result<()> {
         mode: AppMode::Normal,
         sat_config_state,
         database,
+        utility_menu_state: UtilityMenuState::new(),
     };
 
     // Setup terminal
@@ -617,6 +707,11 @@ fn run_app(
                                 }
                                 app_state.mode = AppMode::SatelliteConfig;
                             }
+                            KeyCode::Char('u') => {
+                                // Enter utility menu mode
+                                app_state.utility_menu_state.reset();
+                                app_state.mode = AppMode::UtilityMenu;
+                            }
                             KeyCode::Up | KeyCode::Char('k') => {
                                 if app_state.selected_satellite > 0 {
                                     app_state.selected_satellite -= 1;
@@ -647,6 +742,19 @@ fn run_app(
                 if event::poll(std::time::Duration::from_millis(100))? {
                     if let Event::Key(key) = event::read()? {
                         handle_satellite_config_input(app_state, key.code)?;
+                    }
+                }
+            }
+            AppMode::UtilityMenu => {
+                terminal.draw(|f| {
+                    ui::draw_ui(f, app_state);
+                    ui::draw_utility_menu(f, app_state);
+                })?;
+
+                // Handle input for utility menu mode
+                if event::poll(std::time::Duration::from_millis(100))? {
+                    if let Event::Key(key) = event::read()? {
+                        handle_utility_menu_input(app_state, key.code)?;
                     }
                 }
             }
@@ -777,4 +885,156 @@ fn handle_satellite_config_input(app_state: &mut AppState, key: KeyCode) -> Resu
     }
 
     Ok(())
+}
+
+fn handle_utility_menu_input(app_state: &mut AppState, key: KeyCode) -> Result<()> {
+    let state = &mut app_state.utility_menu_state;
+
+    match state.status {
+        UtilityMenuStatus::Browsing => {
+            match key {
+                KeyCode::Esc | KeyCode::Char('q') => {
+                    state.reset();
+                    app_state.mode = AppMode::Normal;
+                }
+                KeyCode::Up | KeyCode::Char('k') => {
+                    if state.selected_index > 0 {
+                        state.selected_index -= 1;
+                    }
+                }
+                KeyCode::Down | KeyCode::Char('j') => {
+                    if state.selected_index < TLE_SOURCES.len() - 1 {
+                        state.selected_index += 1;
+                    }
+                }
+                KeyCode::Enter => {
+                    // Start download
+                    let source = &TLE_SOURCES[state.selected_index];
+                    state.status = UtilityMenuStatus::Downloading;
+                    state.status_message = Some(format!(
+                        "Downloading {} from Celestrak...",
+                        source.name
+                    ));
+
+                    // Perform download (blocking)
+                    match download_tle_from_celestrak(source.group) {
+                        Ok(tle_data) => {
+                            match parse_and_store_tles(&tle_data, &app_state.database, source.name) {
+                                Ok(count) => {
+                                    state.status = UtilityMenuStatus::Success;
+                                    state.downloaded_count = Some(count);
+                                    state.status_message = Some(format!(
+                                        "Successfully stored {} satellites from {}",
+                                        count, source.name
+                                    ));
+                                }
+                                Err(e) => {
+                                    state.status = UtilityMenuStatus::Error;
+                                    state.status_message = Some(format!(
+                                        "Failed to parse TLEs: {}",
+                                        e
+                                    ));
+                                }
+                            }
+                        }
+                        Err(e) => {
+                            state.status = UtilityMenuStatus::Error;
+                            state.status_message = Some(format!(
+                                "Download failed: {}",
+                                e
+                            ));
+                        }
+                    }
+                }
+                _ => {}
+            }
+        }
+        UtilityMenuStatus::Success | UtilityMenuStatus::Error => {
+            // Any key returns to browsing mode
+            state.status = UtilityMenuStatus::Browsing;
+            state.status_message = None;
+        }
+        UtilityMenuStatus::Downloading => {
+            // Ignore input during download
+        }
+    }
+
+    Ok(())
+}
+
+/// Download TLE data from Celestrak
+fn download_tle_from_celestrak(group: &str) -> Result<String> {
+    let url = format!(
+        "https://celestrak.org/NORAD/elements/gp.php?GROUP={}&FORMAT=tle",
+        group
+    );
+
+    let response = ureq::get(&url)
+        .timeout(std::time::Duration::from_secs(30))
+        .call()
+        .map_err(|e| anyhow::anyhow!("HTTP request failed: {}", e))?;
+
+    if response.status() != 200 {
+        return Err(anyhow::anyhow!(
+            "Celestrak returned status: {}",
+            response.status()
+        ));
+    }
+
+    response
+        .into_string()
+        .map_err(|e| anyhow::anyhow!("Failed to read response: {}", e))
+}
+
+/// Parse TLE data and store satellites in database
+fn parse_and_store_tles(
+    tle_data: &str,
+    database: &Database,
+    source_name: &str,
+) -> Result<usize> {
+    let lines: Vec<&str> = tle_data.lines().collect();
+    let mut stored_count = 0;
+
+    let mut i = 0;
+    while i < lines.len().saturating_sub(2) {
+        // Skip empty lines
+        if lines[i].trim().is_empty() {
+            i += 1;
+            continue;
+        }
+
+        // Check for TLE pattern: name line, then lines starting with 1 and 2
+        if lines[i + 1].starts_with('1') && lines[i + 2].starts_with('2') {
+            let name = lines[i].trim().to_string();
+            let tle_line1 = lines[i + 1].trim().to_string();
+            let tle_line2 = lines[i + 2].trim().to_string();
+
+            // Create satellite details with TLE data
+            let details = SatelliteDetails {
+                id: None,
+                name: name.clone(),
+                tle_line1,
+                tle_line2,
+                launch_date: None,
+                launch_site: None,
+                country_of_origin: None,
+                operator: None,
+                satellite_type: Some(source_name.to_string()),
+                downlink_frequency_mhz: None,
+                uplink_frequency_mhz: None,
+                notes: Some(format!("Downloaded from Celestrak ({})", source_name)),
+            };
+
+            // Use upsert to insert or update
+            if database.upsert(&details).is_ok() {
+                stored_count += 1;
+            }
+
+            i += 3;
+        } else {
+            i += 1;
+        }
+    }
+
+    Ok(stored_count)
 }

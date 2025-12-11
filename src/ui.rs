@@ -8,7 +8,7 @@ use ratatui::{
 };
 
 use crate::radio::SignalStrength;
-use crate::{AppState, ConfigEditMode, ConfigField};
+use crate::{AppState, ConfigEditMode, ConfigField, UtilityMenuStatus, TLE_SOURCES};
 
 pub fn draw_ui(f: &mut Frame, app_state: &AppState) {
     let has_alerts = !app_state.alerts.is_empty();
@@ -866,7 +866,7 @@ fn azimuth_to_cardinal(azimuth: f64) -> &'static str {
 
 fn draw_footer(f: &mut Frame, area: Rect) {
     let footer = Paragraph::new(
-        "↑/↓ or j/k: Select | c: Satellite Config | q/ESC: Quit | Home/End: First/Last",
+        "↑/↓ or j/k: Select | c: Config | u: Utilities | q/ESC: Quit | Home/End: First/Last",
     )
     .style(Style::default().fg(Color::Gray))
     .alignment(Alignment::Center)
@@ -1182,4 +1182,124 @@ fn truncate_string(s: &str, max_len: usize) -> String {
     } else {
         format!("{}...", &s[..max_len.saturating_sub(3)])
     }
+}
+
+/// Draw the utility menu for TLE downloads
+pub fn draw_utility_menu(f: &mut Frame, app_state: &AppState) {
+    let state = &app_state.utility_menu_state;
+
+    // Create centered area for the menu (60% width, 70% height)
+    let area = centered_rect(60, 70, f.area());
+
+    // Clear the area behind the popup
+    f.render_widget(Clear, area);
+
+    // Split into header, content, status, and footer
+    let chunks = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(3),  // Header
+            Constraint::Min(10),    // Content (TLE source list)
+            Constraint::Length(3),  // Status message
+            Constraint::Length(3),  // Footer
+        ])
+        .split(area);
+
+    // Header
+    let header = Paragraph::new(Line::from(vec![
+        Span::styled(
+            "Download TLE Data",
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD),
+        ),
+    ]))
+    .alignment(Alignment::Center)
+    .block(
+        Block::default()
+            .borders(Borders::ALL)
+            .style(Style::default().fg(Color::White)),
+    );
+    f.render_widget(header, chunks[0]);
+
+    // TLE Source List
+    let header_cells = ["Source", "Description"]
+        .iter()
+        .map(|h| {
+            Cell::from(*h).style(
+                Style::default()
+                    .fg(Color::Yellow)
+                    .add_modifier(Modifier::BOLD),
+            )
+        });
+
+    let header_row = Row::new(header_cells).height(1).bottom_margin(1);
+
+    let rows = TLE_SOURCES.iter().enumerate().map(|(idx, source)| {
+        let is_selected = idx == state.selected_index;
+        let style = if is_selected {
+            Style::default()
+                .fg(Color::Cyan)
+                .add_modifier(Modifier::BOLD)
+        } else {
+            Style::default()
+        };
+
+        let indicator = if is_selected { "> " } else { "  " };
+
+        let cells = vec![
+            Cell::from(format!("{}{}", indicator, source.name)),
+            Cell::from(source.description),
+        ];
+
+        Row::new(cells).height(1).style(style)
+    });
+
+    let table = Table::new(
+        rows,
+        [Constraint::Length(25), Constraint::Min(30)],
+    )
+    .header(header_row)
+    .block(
+        Block::default()
+            .borders(Borders::ALL)
+            .title("Celestrak TLE Sources")
+            .style(Style::default().fg(Color::White)),
+    );
+    f.render_widget(table, chunks[1]);
+
+    // Status message
+    let (status_text, status_color) = match state.status {
+        UtilityMenuStatus::Browsing => {
+            ("Select a source and press Enter to download".to_string(), Color::Gray)
+        }
+        UtilityMenuStatus::Downloading => {
+            (state.status_message.clone().unwrap_or_default(), Color::Yellow)
+        }
+        UtilityMenuStatus::Success => {
+            (state.status_message.clone().unwrap_or_default(), Color::Green)
+        }
+        UtilityMenuStatus::Error => {
+            (state.status_message.clone().unwrap_or_default(), Color::Red)
+        }
+    };
+
+    let status = Paragraph::new(status_text)
+        .style(Style::default().fg(status_color))
+        .alignment(Alignment::Center)
+        .block(Block::default().borders(Borders::ALL));
+    f.render_widget(status, chunks[2]);
+
+    // Footer
+    let footer_text = match state.status {
+        UtilityMenuStatus::Browsing => "Enter: Download | j/k/↑↓: Navigate | q/ESC: Close",
+        UtilityMenuStatus::Success | UtilityMenuStatus::Error => "Press any key to continue",
+        UtilityMenuStatus::Downloading => "Please wait...",
+    };
+
+    let footer = Paragraph::new(footer_text)
+        .style(Style::default().fg(Color::Gray))
+        .alignment(Alignment::Center)
+        .block(Block::default().borders(Borders::ALL));
+    f.render_widget(footer, chunks[3]);
 }
