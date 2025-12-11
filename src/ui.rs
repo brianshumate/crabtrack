@@ -1,14 +1,14 @@
 use chrono::{Local, Utc};
 use ratatui::{
+    Frame,
     layout::{Alignment, Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
     widgets::{Block, Borders, Cell, Clear, Paragraph, Row, Table},
-    Frame,
 };
 
 use crate::radio::SignalStrength;
-use crate::{AppState, ConfigEditMode, ConfigField, UtilityMenuStatus, TLE_SOURCES};
+use crate::{AppState, ConfigEditMode, ConfigField, TLE_SOURCES, UtilityMenuStatus};
 
 pub fn draw_ui(f: &mut Frame, app_state: &AppState) {
     let has_alerts = !app_state.alerts.is_empty();
@@ -865,12 +865,15 @@ fn azimuth_to_cardinal(azimuth: f64) -> &'static str {
 }
 
 fn draw_footer(f: &mut Frame, area: Rect) {
-    let footer = Paragraph::new(
-        "↑/↓ or j/k: Select | c: Config | u: Utilities | q/ESC: Quit | Home/End: First/Last",
-    )
-    .style(Style::default().fg(Color::Gray))
-    .alignment(Alignment::Center)
-    .block(Block::default().borders(Borders::ALL));
+    let footer = Paragraph::new("↑/↓ or j/k: Select | q/ESC: Quit | Home/End: First/Last")
+        /*
+        let footer = Paragraph::new(
+            "↑/↓ or j/k: Select | c: Config | u: Utilities | q/ESC: Quit | Home/End: First/Last",
+        )
+        */
+        .style(Style::default().fg(Color::Gray))
+        .alignment(Alignment::Center)
+        .block(Block::default().borders(Borders::ALL));
 
     f.render_widget(footer, area);
 }
@@ -930,33 +933,27 @@ fn draw_satellite_list(f: &mut Frame, area: Rect, app_state: &AppState) {
 
     // Satellite list
     if state.satellites.is_empty() {
-        let empty_msg = Paragraph::new("No satellites configured. Press 'a' to add a new satellite.")
-            .alignment(Alignment::Center)
-            .style(Style::default().fg(Color::Gray))
-            .block(
-                Block::default()
-                    .borders(Borders::ALL)
-                    .title("Satellites")
-                    .style(Style::default().fg(Color::White)),
-            );
+        let empty_msg =
+            Paragraph::new("No satellites configured. Press 'a' to add a new satellite.")
+                .alignment(Alignment::Center)
+                .style(Style::default().fg(Color::Gray))
+                .block(
+                    Block::default()
+                        .borders(Borders::ALL)
+                        .title("Satellites")
+                        .style(Style::default().fg(Color::White)),
+                );
         f.render_widget(empty_msg, chunks[1]);
     } else {
-        let header_cells = [
-            "Name",
-            "Type",
-            "Country",
-            "Operator",
-            "Downlink",
-            "Uplink",
-        ]
-        .iter()
-        .map(|h| {
-            Cell::from(*h).style(
-                Style::default()
-                    .fg(Color::Yellow)
-                    .add_modifier(Modifier::BOLD),
-            )
-        });
+        let header_cells = ["Name", "Type", "Country", "Operator", "Downlink", "Uplink"]
+            .iter()
+            .map(|h| {
+                Cell::from(*h).style(
+                    Style::default()
+                        .fg(Color::Yellow)
+                        .add_modifier(Modifier::BOLD),
+                )
+            });
 
         let header_row = Row::new(header_cells).height(1).bottom_margin(1);
 
@@ -980,10 +977,7 @@ fn draw_satellite_list(f: &mut Frame, area: Rect, app_state: &AppState) {
                     sat.country_of_origin.as_deref().unwrap_or("-"),
                     12,
                 )),
-                Cell::from(truncate_string(
-                    sat.operator.as_deref().unwrap_or("-"),
-                    15,
-                )),
+                Cell::from(truncate_string(sat.operator.as_deref().unwrap_or("-"), 15)),
                 Cell::from(
                     sat.downlink_frequency_mhz
                         .map(|f| format!("{:.3}", f))
@@ -1022,10 +1016,7 @@ fn draw_satellite_list(f: &mut Frame, area: Rect, app_state: &AppState) {
     }
 
     // Status message
-    let status_text = state
-        .status_message
-        .as_deref()
-        .unwrap_or("");
+    let status_text = state.status_message.as_deref().unwrap_or("");
     let status = Paragraph::new(status_text)
         .style(Style::default().fg(Color::Yellow))
         .alignment(Alignment::Center)
@@ -1033,12 +1024,11 @@ fn draw_satellite_list(f: &mut Frame, area: Rect, app_state: &AppState) {
     f.render_widget(status, chunks[2]);
 
     // Footer with keybindings
-    let footer = Paragraph::new(
-        "a: Add | e/Enter: Edit | d/Del: Delete | ↑/↓: Navigate | q/ESC: Back",
-    )
-    .style(Style::default().fg(Color::Gray))
-    .alignment(Alignment::Center)
-    .block(Block::default().borders(Borders::ALL));
+    let footer =
+        Paragraph::new("a: Add | e/Enter: Edit | d/Del: Delete | ↑/↓: Navigate | q/ESC: Back")
+            .style(Style::default().fg(Color::Gray))
+            .alignment(Alignment::Center)
+            .block(Block::default().borders(Borders::ALL));
     f.render_widget(footer, chunks[3]);
 }
 
@@ -1056,10 +1046,10 @@ fn draw_satellite_edit_form(f: &mut Frame, area: Rect, app_state: &AppState) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(3),  // Header
-            Constraint::Min(15),    // Form fields
-            Constraint::Length(3),  // Status
-            Constraint::Length(3),  // Footer
+            Constraint::Length(3), // Header
+            Constraint::Min(15),   // Form fields
+            Constraint::Length(3), // Status
+            Constraint::Length(3), // Footer
         ])
         .split(area);
 
@@ -1198,22 +1188,20 @@ pub fn draw_utility_menu(f: &mut Frame, app_state: &AppState) {
     let chunks = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(3),  // Header
-            Constraint::Min(10),    // Content (TLE source list)
-            Constraint::Length(3),  // Status message
-            Constraint::Length(3),  // Footer
+            Constraint::Length(3), // Header
+            Constraint::Min(10),   // Content (TLE source list)
+            Constraint::Length(3), // Status message
+            Constraint::Length(3), // Footer
         ])
         .split(area);
 
     // Header
-    let header = Paragraph::new(Line::from(vec![
-        Span::styled(
-            "Download TLE Data",
-            Style::default()
-                .fg(Color::Cyan)
-                .add_modifier(Modifier::BOLD),
-        ),
-    ]))
+    let header = Paragraph::new(Line::from(vec![Span::styled(
+        "Download TLE Data",
+        Style::default()
+            .fg(Color::Cyan)
+            .add_modifier(Modifier::BOLD),
+    )]))
     .alignment(Alignment::Center)
     .block(
         Block::default()
@@ -1223,15 +1211,13 @@ pub fn draw_utility_menu(f: &mut Frame, app_state: &AppState) {
     f.render_widget(header, chunks[0]);
 
     // TLE Source List
-    let header_cells = ["Source", "Description"]
-        .iter()
-        .map(|h| {
-            Cell::from(*h).style(
-                Style::default()
-                    .fg(Color::Yellow)
-                    .add_modifier(Modifier::BOLD),
-            )
-        });
+    let header_cells = ["Source", "Description"].iter().map(|h| {
+        Cell::from(*h).style(
+            Style::default()
+                .fg(Color::Yellow)
+                .add_modifier(Modifier::BOLD),
+        )
+    });
 
     let header_row = Row::new(header_cells).height(1).bottom_margin(1);
 
@@ -1255,33 +1241,31 @@ pub fn draw_utility_menu(f: &mut Frame, app_state: &AppState) {
         Row::new(cells).height(1).style(style)
     });
 
-    let table = Table::new(
-        rows,
-        [Constraint::Length(25), Constraint::Min(30)],
-    )
-    .header(header_row)
-    .block(
-        Block::default()
-            .borders(Borders::ALL)
-            .title("Celestrak TLE Sources")
-            .style(Style::default().fg(Color::White)),
-    );
+    let table = Table::new(rows, [Constraint::Length(25), Constraint::Min(30)])
+        .header(header_row)
+        .block(
+            Block::default()
+                .borders(Borders::ALL)
+                .title("Celestrak TLE Sources")
+                .style(Style::default().fg(Color::White)),
+        );
     f.render_widget(table, chunks[1]);
 
     // Status message
     let (status_text, status_color) = match state.status {
-        UtilityMenuStatus::Browsing => {
-            ("Select a source and press Enter to download".to_string(), Color::Gray)
-        }
-        UtilityMenuStatus::Downloading => {
-            (state.status_message.clone().unwrap_or_default(), Color::Yellow)
-        }
-        UtilityMenuStatus::Success => {
-            (state.status_message.clone().unwrap_or_default(), Color::Green)
-        }
-        UtilityMenuStatus::Error => {
-            (state.status_message.clone().unwrap_or_default(), Color::Red)
-        }
+        UtilityMenuStatus::Browsing => (
+            "Select a source and press Enter to download".to_string(),
+            Color::Gray,
+        ),
+        UtilityMenuStatus::Downloading => (
+            state.status_message.clone().unwrap_or_default(),
+            Color::Yellow,
+        ),
+        UtilityMenuStatus::Success => (
+            state.status_message.clone().unwrap_or_default(),
+            Color::Green,
+        ),
+        UtilityMenuStatus::Error => (state.status_message.clone().unwrap_or_default(), Color::Red),
     };
 
     let status = Paragraph::new(status_text)
