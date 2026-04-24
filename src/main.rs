@@ -11,6 +11,7 @@ use database::{Database, SatelliteDetails};
 use anyhow::Result;
 use chrono::{DateTime, Duration, Utc};
 use clap::Parser;
+use std::sync::{Arc, Mutex};
 use crossterm::{
     event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode},
     execute,
@@ -98,6 +99,13 @@ pub const TLE_SOURCES: &[TleSource] = &[
     },
 ];
 
+/// Shared progress state for a background TLE download
+pub struct DownloadProgress {
+    pub bytes_received: u64,
+    pub total_bytes: u64,
+    pub result: Option<Result<String, String>>,
+}
+
 /// Status for the utility menu
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum UtilityMenuStatus {
@@ -113,6 +121,7 @@ pub struct UtilityMenuState {
     pub status: UtilityMenuStatus,
     pub status_message: Option<String>,
     pub downloaded_count: Option<usize>,
+    pub download_progress: Option<Arc<Mutex<DownloadProgress>>>,
 }
 
 impl UtilityMenuState {
@@ -122,6 +131,7 @@ impl UtilityMenuState {
             status: UtilityMenuStatus::Browsing,
             status_message: None,
             downloaded_count: None,
+            download_progress: None,
         }
     }
 
@@ -130,6 +140,7 @@ impl UtilityMenuState {
         self.status = UtilityMenuStatus::Browsing;
         self.status_message = None;
         self.downloaded_count = None;
+        self.download_progress = None;
     }
 }
 
@@ -339,13 +350,47 @@ fn main() -> Result<()> {
         config.observer.altitude,
     );
 
+    // Initialize database before satellite loading so we can look up source names
+    let db_path = dirs::data_local_dir()
+        .unwrap_or_else(|| std::path::PathBuf::from("."))
+        .join("crabtrack")
+        .join("satellites.db");
+
+    if let Some(parent) = db_path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+
+    let database = Database::open(&db_path)?;
+    println!("Database initialized at: {}", db_path.display());
+
+    // Build name→satellite_type map from database for staleness grouping
+    let db_type_map: std::collections::HashMap<String, String> = database
+        .read_all()
+        .unwrap_or_default()
+        .into_iter()
+        .filter_map(|d| d.satellite_type.map(|t| (d.name, t)))
+        .collect();
+
     let tle_file = args.tle.unwrap_or_else(|| config.satellites.tle_file.clone());
     let tle_data = fs::read_to_string(&tle_file)?;
     let mut satellites = parse_multiple_tles(&tle_data, &config)?;
 
     // Predict passes for all satellites
     println!("Predicting passes for {} satellites...", satellites.len());
+    let now = Utc::now();
+    let mut stale_sources: std::collections::HashMap<String, i64> = std::collections::HashMap::new();
     for satellite in satellites.iter_mut() {
+        let tle_age_days = (now.timestamp() - satellite.epoch.timestamp()).abs() / 86400;
+        if tle_age_days > 30 {
+            let source = db_type_map
+                .get(&satellite.name)
+                .cloned()
+                .unwrap_or_else(|| "Unknown".to_string());
+            let entry = stale_sources.entry(source).or_insert(0);
+            if tle_age_days > *entry {
+                *entry = tle_age_days;
+            }
+        }
         match predict_passes(
             &satellite.elements,
             &satellite.epoch,
@@ -367,6 +412,13 @@ fn main() -> Result<()> {
         }
     }
 
+    // Emit one staleness warning per TLE set
+    let mut stale_list: Vec<(String, i64)> = stale_sources.into_iter().collect();
+    stale_list.sort_by(|a, b| a.0.cmp(&b.0));
+    for (source, age_days) in stale_list {
+        eprintln!("Warning: {} TLEs are {} days old — update via Utilities menu", source, age_days);
+    }
+
     // Calculate initial positions
     let mut current_positions = satellites
         .iter()
@@ -384,20 +436,6 @@ fn main() -> Result<()> {
             pos.comm_window = Some(evaluate_communication_window(pos));
         }
     }
-
-    // Initialize database
-    let db_path = dirs::data_local_dir()
-        .unwrap_or_else(|| std::path::PathBuf::from("."))
-        .join("crabtrack")
-        .join("satellites.db");
-
-    // Ensure the directory exists
-    if let Some(parent) = db_path.parent() {
-        std::fs::create_dir_all(parent)?;
-    }
-
-    let database = Database::open(&db_path)?;
-    println!("Database initialized at: {}", db_path.display());
 
     // Load satellite config state from database
     let mut sat_config_state = SatelliteConfigState::new();
@@ -530,17 +568,11 @@ fn predict_passes(
     let tle_age_seconds = (start_time.timestamp() - tle_epoch.timestamp()).abs();
     let tle_age_days = tle_age_seconds / 86400;
 
-    if tle_age_days > 30 {
-        eprintln!(
-            "Warning: TLE data is {} days old. Predictions may be inaccurate.",
+    if tle_age_days > 90 {
+        return Err(anyhow::anyhow!(
+            "TLE data is too old ({} days). Update via the Utilities menu.",
             tle_age_days
-        );
-        if tle_age_days > 90 {
-            return Err(anyhow::anyhow!(
-                "TLE data is too old ({} days). Please download fresh TLE data from https://celestrak.org",
-                tle_age_days
-            ));
-        }
+        ));
     }
 
     let mut current_time = start_time;
@@ -769,6 +801,48 @@ fn run_app(
                 }
             }
             AppMode::UtilityMenu => {
+                // Poll for background download completion
+                if app_state.utility_menu_state.status == UtilityMenuStatus::Downloading {
+                    let finished = app_state.utility_menu_state.download_progress
+                        .as_ref()
+                        .and_then(|p| {
+                            let prog = p.lock().unwrap();
+                            prog.result.as_ref().map(|r| match r {
+                                Ok(s) => Ok(s.clone()),
+                                Err(e) => Err(e.clone()),
+                            })
+                        });
+
+                    if let Some(download_result) = finished {
+                        let source_name = TLE_SOURCES[app_state.utility_menu_state.selected_index].name;
+                        app_state.utility_menu_state.download_progress = None;
+                        match download_result {
+                            Ok(tle_data) => {
+                                match parse_and_store_tles(&tle_data, &app_state.database, source_name) {
+                                    Ok(count) => {
+                                        app_state.utility_menu_state.status = UtilityMenuStatus::Success;
+                                        app_state.utility_menu_state.downloaded_count = Some(count);
+                                        app_state.utility_menu_state.status_message = Some(format!(
+                                            "Successfully stored {} satellites from {}",
+                                            count, source_name
+                                        ));
+                                    }
+                                    Err(e) => {
+                                        app_state.utility_menu_state.status = UtilityMenuStatus::Error;
+                                        app_state.utility_menu_state.status_message =
+                                            Some(format!("Failed to parse TLEs: {}", e));
+                                    }
+                                }
+                            }
+                            Err(e) => {
+                                app_state.utility_menu_state.status = UtilityMenuStatus::Error;
+                                app_state.utility_menu_state.status_message =
+                                    Some(format!("Download failed: {}", e));
+                            }
+                        }
+                    }
+                }
+
                 terminal.draw(|f| {
                     ui::draw_ui(f, app_state);
                     ui::draw_utility_menu(f, app_state);
@@ -931,43 +1005,23 @@ fn handle_utility_menu_input(app_state: &mut AppState, key: KeyCode) -> Result<(
                     }
                 }
                 KeyCode::Enter => {
-                    // Start download
                     let source = &TLE_SOURCES[state.selected_index];
                     state.status = UtilityMenuStatus::Downloading;
-                    state.status_message = Some(format!(
-                        "Downloading {} from Celestrak...",
-                        source.name
-                    ));
+                    state.status_message = None;
 
-                    // Perform download (blocking)
-                    match download_tle_from_celestrak(source.group) {
-                        Ok(tle_data) => {
-                            match parse_and_store_tles(&tle_data, &app_state.database, source.name) {
-                                Ok(count) => {
-                                    state.status = UtilityMenuStatus::Success;
-                                    state.downloaded_count = Some(count);
-                                    state.status_message = Some(format!(
-                                        "Successfully stored {} satellites from {}",
-                                        count, source.name
-                                    ));
-                                }
-                                Err(e) => {
-                                    state.status = UtilityMenuStatus::Error;
-                                    state.status_message = Some(format!(
-                                        "Failed to parse TLEs: {}",
-                                        e
-                                    ));
-                                }
-                            }
-                        }
-                        Err(e) => {
-                            state.status = UtilityMenuStatus::Error;
-                            state.status_message = Some(format!(
-                                "Download failed: {}",
-                                e
-                            ));
-                        }
-                    }
+                    let progress = Arc::new(Mutex::new(DownloadProgress {
+                        bytes_received: 0,
+                        total_bytes: 0,
+                        result: None,
+                    }));
+                    state.download_progress = Some(Arc::clone(&progress));
+
+                    let group = source.group.to_string();
+                    std::thread::spawn(move || {
+                        let result = download_tle_from_celestrak(&group, Arc::clone(&progress));
+                        let mut prog = progress.lock().unwrap();
+                        prog.result = Some(result.map_err(|e| e.to_string()));
+                    });
                 }
                 _ => {}
             }
@@ -985,8 +1039,10 @@ fn handle_utility_menu_input(app_state: &mut AppState, key: KeyCode) -> Result<(
     Ok(())
 }
 
-/// Download TLE data from Celestrak
-fn download_tle_from_celestrak(group: &str) -> Result<String> {
+/// Download TLE data from Celestrak, reporting byte progress via shared state
+fn download_tle_from_celestrak(group: &str, progress: Arc<Mutex<DownloadProgress>>) -> Result<String> {
+    use std::io::Read;
+
     let url = format!(
         "https://celestrak.org/NORAD/elements/gp.php?GROUP={}&FORMAT=tle",
         group
@@ -1004,9 +1060,33 @@ fn download_tle_from_celestrak(group: &str) -> Result<String> {
         ));
     }
 
-    response
-        .into_string()
-        .map_err(|e| anyhow::anyhow!("Failed to read response: {}", e))
+    let total_bytes = response
+        .header("content-length")
+        .and_then(|v| v.parse::<u64>().ok())
+        .unwrap_or(0);
+
+    {
+        let mut prog = progress.lock().unwrap();
+        prog.total_bytes = total_bytes;
+    }
+
+    let mut reader = response.into_reader();
+    let mut body: Vec<u8> = Vec::new();
+    let mut chunk = [0u8; 8192];
+
+    loop {
+        let n = reader
+            .read(&mut chunk)
+            .map_err(|e| anyhow::anyhow!("Failed to read response: {}", e))?;
+        if n == 0 {
+            break;
+        }
+        body.extend_from_slice(&chunk[..n]);
+        let mut prog = progress.lock().unwrap();
+        prog.bytes_received = body.len() as u64;
+    }
+
+    String::from_utf8(body).map_err(|e| anyhow::anyhow!("Response not valid UTF-8: {}", e))
 }
 
 /// Parse TLE data and store satellites in database

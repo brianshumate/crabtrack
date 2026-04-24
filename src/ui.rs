@@ -4,7 +4,7 @@ use ratatui::{
     layout::{Alignment, Constraint, Direction, Layout, Rect},
     style::{Color, Modifier, Style},
     text::{Line, Span},
-    widgets::{Block, Borders, Cell, Clear, Paragraph, Row, Table},
+    widgets::{Block, Borders, Cell, Clear, Gauge, Paragraph, Row, Table},
 };
 
 use crate::radio::SignalStrength;
@@ -1246,28 +1246,58 @@ pub fn draw_utility_menu(f: &mut Frame, app_state: &AppState) {
         );
     f.render_widget(table, chunks[1]);
 
-    // Status message
-    let (status_text, status_color) = match state.status {
-        UtilityMenuStatus::Browsing => (
-            "Select a source and press Enter to download".to_string(),
-            Color::Gray,
-        ),
-        UtilityMenuStatus::Downloading => (
-            state.status_message.clone().unwrap_or_default(),
-            Color::Yellow,
-        ),
-        UtilityMenuStatus::Success => (
-            state.status_message.clone().unwrap_or_default(),
-            Color::Green,
-        ),
-        UtilityMenuStatus::Error => (state.status_message.clone().unwrap_or_default(), Color::Red),
-    };
+    // Status area — progress bar while downloading, text otherwise
+    if state.status == UtilityMenuStatus::Downloading {
+        let (bytes_received, total_bytes) = state
+            .download_progress
+            .as_ref()
+            .map(|p| {
+                let prog = p.lock().unwrap();
+                (prog.bytes_received, prog.total_bytes)
+            })
+            .unwrap_or((0, 0));
 
-    let status = Paragraph::new(status_text)
-        .style(Style::default().fg(status_color))
-        .alignment(Alignment::Center)
-        .block(Block::default().borders(Borders::ALL));
-    f.render_widget(status, chunks[2]);
+        let ratio = if total_bytes > 0 {
+            (bytes_received as f64 / total_bytes as f64).min(1.0)
+        } else {
+            0.0
+        };
+
+        let label = if total_bytes > 0 {
+            format!("{} / {} KB", bytes_received / 1024, total_bytes / 1024)
+        } else {
+            format!("{} KB received", bytes_received / 1024)
+        };
+
+        let gauge = Gauge::default()
+            .block(Block::default().borders(Borders::ALL).title("Downloading"))
+            .gauge_style(Style::default().fg(Color::Yellow).bg(Color::DarkGray))
+            .ratio(ratio)
+            .label(label);
+        f.render_widget(gauge, chunks[2]);
+    } else {
+        let (status_text, status_color) = match state.status {
+            UtilityMenuStatus::Browsing => (
+                "Select a source and press Enter to download".to_string(),
+                Color::Gray,
+            ),
+            UtilityMenuStatus::Success => (
+                state.status_message.clone().unwrap_or_default(),
+                Color::Green,
+            ),
+            UtilityMenuStatus::Error => (
+                state.status_message.clone().unwrap_or_default(),
+                Color::Red,
+            ),
+            UtilityMenuStatus::Downloading => unreachable!(),
+        };
+
+        let status = Paragraph::new(status_text)
+            .style(Style::default().fg(status_color))
+            .alignment(Alignment::Center)
+            .block(Block::default().borders(Borders::ALL));
+        f.render_widget(status, chunks[2]);
+    }
 
     // Footer
     let footer_text = match state.status {
