@@ -48,30 +48,8 @@ pub fn calculate_doppler_shift(
     downlink_freq_mhz: f64,
     uplink_freq_mhz: f64,
 ) -> DopplerShift {
-    // Calculate radial velocity using velocity vectors and range
-    // Positive radial velocity = moving away (red shift)
-    // Negative radial velocity = moving toward (blue shift)
-
-    // Get the velocity components in km/s
-let _vx = position.velocity_x;
-    let _vy = position.velocity_y;
-    let _vz = position.velocity_z;
-    let sat_velocity_ms = position.velocity_km_s * 1000.0;
-
-    let elevation_rad = position.elevation.to_radians();
-    let _azimuth_rad = position.azimuth.to_radians();
-
-    // Approximate radial velocity using velocity magnitude and direction
-    // The elevation angle determines how much of the velocity is toward/away from observer
-    // At horizon (el=0): all horizontal velocity is tangential, radial is small
-    // At zenith (el=90): velocity is mostly radial or perpendicular
-    let radial_velocity = sat_velocity_ms * elevation_rad.cos() * 0.7; // Rough approximation with directional factor
-
-    // Simple sign based on elevation change direction (approaching vs receding)
-    // When satellite is low and rising, it's approaching
-    // When satellite is high and setting, it's receding
-    let radial_sign = if position.elevation < 45.0 { -1.0 } else { 1.0 };
-    let radial_velocity = radial_velocity * radial_sign;
+    // Radial velocity from satellite.rs: positive = receding (redshift), negative = approaching (blueshift)
+    let radial_velocity = position.range_rate_km_s * 1000.0; // convert km/s to m/s
 
     let downlink_shift_hz = -(radial_velocity / SPEED_OF_LIGHT) * (downlink_freq_mhz * 1_000_000.0);
     let downlink_observed_mhz = downlink_freq_mhz + (downlink_shift_hz / 1_000_000.0);

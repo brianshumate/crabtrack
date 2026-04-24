@@ -24,9 +24,7 @@ pub struct SatellitePosition {
     pub longitude: f64,
     pub altitude_km: f64,
     pub velocity_km_s: f64,
-    pub velocity_x: f64,
-    pub velocity_y: f64,
-    pub velocity_z: f64,
+    pub range_rate_km_s: f64,
     pub azimuth: f64,
     pub elevation: f64,
     pub range_km: f64,
@@ -86,6 +84,37 @@ impl Satellite {
             observer.longitude,
         );
 
+        // Compute range rate via dot product of relative velocity with unit range vector.
+        // Convert satellite ECI velocity to ECEF: v_ecef = R(gmst)*v_eci - ω×r_ecef
+        // Observer is fixed on Earth so v_obs_ecef = 0.
+        const EARTH_ROT_RAD_S: f64 = 7.2921150e-5;
+        let gmst_cos = gmst.cos();
+        let gmst_sin = gmst.sin();
+        let sat_ecef_km = Vector3::new(
+            sat_pos_km.x * gmst_cos + sat_pos_km.y * gmst_sin,
+            -sat_pos_km.x * gmst_sin + sat_pos_km.y * gmst_cos,
+            sat_pos_km.z,
+        );
+        let vel_rotated = Vector3::new(
+            sat_vel_km_s.x * gmst_cos + sat_vel_km_s.y * gmst_sin,
+            -sat_vel_km_s.x * gmst_sin + sat_vel_km_s.y * gmst_cos,
+            sat_vel_km_s.z,
+        );
+        let sat_vel_ecef_km_s = vel_rotated
+            - Vector3::new(
+                -EARTH_ROT_RAD_S * sat_ecef_km.y,
+                EARTH_ROT_RAD_S * sat_ecef_km.x,
+                0.0,
+            );
+        let obs_ecef_km = observer_ecef / 1000.0;
+        let range_vec_km = sat_ecef_km - obs_ecef_km;
+        let range_norm = range_vec_km.norm();
+        let range_rate_km_s = if range_norm > 0.0 {
+            sat_vel_ecef_km_s.dot(&(range_vec_km / range_norm))
+        } else {
+            0.0
+        };
+
         // Convert ECI to geodetic coordinates
         let (lat, lon, alt_km) = eci_to_geodetic(&sat_pos_km, gmst);
 
@@ -96,9 +125,7 @@ impl Satellite {
             longitude: lon,
             altitude_km: alt_km,
             velocity_km_s,
-            velocity_x: sat_vel_km_s.x,
-            velocity_y: sat_vel_km_s.y,
-            velocity_z: sat_vel_km_s.z,
+            range_rate_km_s,
             azimuth: look_angles.azimuth,
             elevation: look_angles.elevation,
             range_km: look_angles.range,

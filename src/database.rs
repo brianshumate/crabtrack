@@ -62,7 +62,7 @@ impl Database {
     }
 
     /// Initialize the database schema
-fn init_schema(&self) -> Result<()> {
+    fn init_schema(&self) -> Result<()> {
         self.conn.execute_batch(
             r#"
             CREATE SEQUENCE IF NOT EXISTS satellite_id_seq START 1;

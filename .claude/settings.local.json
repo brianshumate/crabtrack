@@ -12,7 +12,11 @@
       "Bash(wc:*)",
       "Bash(bd create:*)",
       "Bash(bd update:*)",
-      "Bash(bd close:*)"
+      "Bash(bd close:*)",
+      "Bash(gh pr *)",
+      "Bash(gh api *)",
+      "Bash(jq *)",
+      "Bash(cargo test *)"
     ]
   }
 }
