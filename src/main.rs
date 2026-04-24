@@ -555,6 +555,8 @@ fn predict_passes(
     let mut max_range = 0.0;
 
     let constants = Constants::from_elements(elements)?;
+    let mut consecutive_errors = 0u32;
+    const MAX_CONSECUTIVE_ERRORS: u32 = 10;
 
     while current_time < end_time && passes.len() < config.num_passes {
         // Convert current time to minutes since TLE epoch
@@ -562,8 +564,15 @@ fn predict_passes(
 
         // Try to propagate, skip if error
         let prediction = match constants.propagate(MinutesSinceEpoch(minutes_since_epoch)) {
-            Ok(pred) => pred,
+            Ok(pred) => {
+                consecutive_errors = 0;
+                pred
+            }
             Err(_e) => {
+                consecutive_errors += 1;
+                if consecutive_errors >= MAX_CONSECUTIVE_ERRORS {
+                    break;
+                }
                 current_time = current_time + time_step;
                 continue;
             }

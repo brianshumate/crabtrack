@@ -12,7 +12,12 @@
       "Bash(wc:*)",
       "Bash(bd create:*)",
       "Bash(bd update:*)",
-      "Bash(bd close:*)"
+      "Bash(bd close:*)",
+      "Bash(gh pr *)",
+      "Bash(gh api *)",
+      "Bash(python3 -c \"import json,sys; data=json.load\\(sys.stdin\\); [print\\(f'File: {c[\\\\\"path\\\\\"]}\\\\nLine: {c.get\\(\\\\\"line\\\\\",\\\\\"N/A\\\\\"\\)}\\\\nComment: {c[\\\\\"body\\\\\"]}\\\\n---'\\) for c in data]\")",
+      "Bash(python3 -c \"import json,sys; data=json.load\\(sys.stdin\\); [print\\(f'Reviewer: {r[\\\\\"user\\\\\"][\\\\\"login\\\\\"]}\\\\nState: {r[\\\\\"state\\\\\"]}\\\\nBody: {r[\\\\\"body\\\\\"]}\\\\n---'\\) for r in data]\")",
+      "Bash(cargo test *)"
     ]
   }
 }
