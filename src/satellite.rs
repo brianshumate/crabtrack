@@ -108,8 +108,12 @@ impl Satellite {
             );
         let obs_ecef_km = observer_ecef / 1000.0;
         let range_vec_km = sat_ecef_km - obs_ecef_km;
-        let range_unit = range_vec_km / range_vec_km.norm();
-        let range_rate_km_s = sat_vel_ecef_km_s.dot(&range_unit);
+        let range_norm = range_vec_km.norm();
+        let range_rate_km_s = if range_norm > 0.0 {
+            sat_vel_ecef_km_s.dot(&(range_vec_km / range_norm))
+        } else {
+            0.0
+        };
 
         // Convert ECI to geodetic coordinates
         let (lat, lon, alt_km) = eci_to_geodetic(&sat_pos_km, gmst);
