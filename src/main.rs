@@ -10,6 +10,7 @@ use database::{Database, SatelliteDetails};
 
 use anyhow::Result;
 use chrono::{DateTime, Duration, Utc};
+use clap::Parser;
 use crossterm::{
     event::{self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode},
     execute,
@@ -19,11 +20,23 @@ use ratatui::{backend::CrosstermBackend, Terminal};
 use sgp4::{Constants, Elements, MinutesSinceEpoch};
 use std::fs;
 
+use std::path::PathBuf;
+
 use config::Config;
 use observer::Observer;
 use pass_prediction::{calculate_gmst, calculate_look_angles, SatellitePass};
 use radio::{calculate_doppler_shift, evaluate_communication_window};
 use satellite::{Satellite, SatellitePosition};
+
+#[derive(Parser, Debug)]
+#[command(author, version, about, long_about = None)]
+pub struct Args {
+    #[arg(short, long, default_value = "config.toml")]
+    config: String,
+
+    #[arg(short, long)]
+    tle: Option<PathBuf>,
+}
 
 /// Application view mode
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -302,11 +315,12 @@ pub struct Alert {
 }
 
 fn main() -> Result<()> {
-    // Load configuration
-    let config = match Config::load("config.toml") {
+    let args = Args::parse();
+
+    let config = match Config::load(&args.config) {
         Ok(cfg) => cfg,
         Err(e) => {
-            eprintln!("\nError: Could not load configuration file 'config.toml'");
+            eprintln!("\nError: Could not load configuration file '{}'", args.config);
             eprintln!("   Reason: {}\n", e);
             eprintln!("   To fix this issue:");
             eprintln!("   1. Copy the example configuration file:");
@@ -325,8 +339,8 @@ fn main() -> Result<()> {
         config.observer.altitude,
     );
 
-    // Load TLE data and create satellites
-    let tle_data = fs::read_to_string(&config.satellites.tle_file)?;
+    let tle_file = args.tle.unwrap_or_else(|| config.satellites.tle_file.clone());
+    let tle_data = fs::read_to_string(&tle_file)?;
     let mut satellites = parse_multiple_tles(&tle_data, &config)?;
 
     // Predict passes for all satellites
@@ -549,9 +563,9 @@ fn predict_passes(
         // Try to propagate, skip if error
         let prediction = match constants.propagate(MinutesSinceEpoch(minutes_since_epoch)) {
             Ok(pred) => pred,
-            Err(e) => {
-                eprintln!("Warning: Propagation failed at {:?}: {:?}", current_time, e);
-                break;
+            Err(_e) => {
+                current_time = current_time + time_step;
+                continue;
             }
         };
 

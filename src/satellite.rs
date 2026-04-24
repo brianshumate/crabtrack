@@ -24,6 +24,9 @@ pub struct SatellitePosition {
     pub longitude: f64,
     pub altitude_km: f64,
     pub velocity_km_s: f64,
+    pub velocity_x: f64,
+    pub velocity_y: f64,
+    pub velocity_z: f64,
     pub azimuth: f64,
     pub elevation: f64,
     pub range_km: f64,
@@ -93,12 +96,15 @@ impl Satellite {
             longitude: lon,
             altitude_km: alt_km,
             velocity_km_s,
+            velocity_x: sat_vel_km_s.x,
+            velocity_y: sat_vel_km_s.y,
+            velocity_z: sat_vel_km_s.z,
             azimuth: look_angles.azimuth,
             elevation: look_angles.elevation,
             range_km: look_angles.range,
             is_visible: look_angles.elevation > 0.0,
-            doppler: None,     // Will be calculated separately if radio enabled
-            comm_window: None, // Will be calculated separately if radio enabled
+            doppler: None,
+            comm_window: None,
         })
     }
 

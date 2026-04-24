@@ -62,11 +62,12 @@ impl Database {
     }
 
     /// Initialize the database schema
-    fn init_schema(&self) -> Result<()> {
+fn init_schema(&self) -> Result<()> {
         self.conn.execute_batch(
             r#"
+            CREATE SEQUENCE IF NOT EXISTS satellite_id_seq START 1;
             CREATE TABLE IF NOT EXISTS satellite_details (
-                id INTEGER PRIMARY KEY,
+                id INTEGER DEFAULT nextval('satellite_id_seq'),
                 name VARCHAR NOT NULL UNIQUE,
                 tle_line1 VARCHAR DEFAULT '',
                 tle_line2 VARCHAR DEFAULT '',
@@ -78,22 +79,26 @@ impl Database {
                 downlink_frequency_mhz DOUBLE,
                 uplink_frequency_mhz DOUBLE,
                 notes VARCHAR
-            );
-            "#,
+            );"#,
         )?;
         Ok(())
     }
 
     /// Create a new satellite details entry
     pub fn create(&self, details: &SatelliteDetails) -> Result<i64> {
-        self.conn.execute(
+        // Use RETURNING clause to get the id directly from INSERT
+        let mut stmt = self.conn.prepare(
             r#"
             INSERT INTO satellite_details (
                 name, tle_line1, tle_line2, launch_date, launch_site,
                 country_of_origin, operator, satellite_type,
                 downlink_frequency_mhz, uplink_frequency_mhz, notes
             ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            RETURNING id
             "#,
+        )?;
+
+        let id = stmt.query_row(
             params![
                 details.name,
                 details.tle_line1,
@@ -107,12 +112,6 @@ impl Database {
                 details.uplink_frequency_mhz,
                 details.notes,
             ],
-        )?;
-
-        // Get the last inserted row id
-        let id: i64 = self.conn.query_row(
-            "SELECT last_insert_rowid()",
-            [],
             |row| row.get(0),
         )?;
 
