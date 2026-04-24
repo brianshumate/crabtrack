@@ -865,12 +865,7 @@ fn azimuth_to_cardinal(azimuth: f64) -> &'static str {
 }
 
 fn draw_footer(f: &mut Frame, area: Rect) {
-    let footer = Paragraph::new("↑/↓ or j/k: Select | q/ESC: Quit | Home/End: First/Last")
-        /*
-        let footer = Paragraph::new(
-            "↑/↓ or j/k: Select | c: Config | u: Utilities | q/ESC: Quit | Home/End: First/Last",
-        )
-        */
+    let footer = Paragraph::new("↑/↓ or j/k: Select | c: Config | u: Utilities | q/ESC: Quit | Home/End: First/Last")
         .style(Style::default().fg(Color::Gray))
         .alignment(Alignment::Center)
         .block(Block::default().borders(Borders::ALL));

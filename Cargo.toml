@@ -1,15 +1,14 @@
 [package]
 name = "crabtrack"
 version = "0.4.1"
-edition = "2024"
+edition = "2021"
 
 [dependencies]
 # Satellite tracking
-sgp4 = "2.3"
+sgp4 = "2.4"
 
 # Time handling
-chrono = "0.4.42"
-hifitime = "4.2.3"
+chrono = "0.4"
 
 # Configuration
 serde = { version = "1.0", features = ["derive"] }
@@ -20,11 +19,11 @@ ratatui = "0.29"
 crossterm = "0.29"
 
 # Math
-nalgebra = "0.34.1"
+nalgebra = "0.34"
 
 # Error handling
-anyhow = "1.0.100"
-thiserror = "2.0.17"
+anyhow = "1.0"
+thiserror = "2.0"
 
 # Database
 duckdb = { version = "1.1", features = ["bundled"] }
@@ -34,3 +33,6 @@ dirs = "5.0"
 
 # HTTP client for TLE downloads
 ureq = { version = "2.10", features = ["tls"] }
+
+# Command-line arguments
+clap = { version = "4.0", features = ["derive"] }

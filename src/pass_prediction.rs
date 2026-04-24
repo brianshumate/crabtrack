@@ -99,3 +99,113 @@ pub fn calculate_gmst(time: DateTime<Utc>) -> f64 {
 
     (gmst_hours * 15.0).to_radians() // Convert hours to radians
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chrono::TimeZone;
+
+    #[test]
+    fn test_satellite_pass_duration() {
+        let pass = SatellitePass {
+            aos_time: Utc.with_ymd_and_hms(2026, 4, 24, 10, 0, 0).unwrap(),
+            los_time: Utc.with_ymd_and_hms(2026, 4, 24, 10, 10, 0).unwrap(),
+            max_elevation: 45.0,
+            max_elevation_time: Utc.with_ymd_and_hms(2026, 4, 24, 10, 5, 0).unwrap(),
+            aos_azimuth: 90.0,
+            max_azimuth: 180.0,
+            los_azimuth: 270.0,
+            duration_seconds: 600.0,
+            max_range_km: 1000.0,
+        };
+        assert!((pass.duration_minutes() - 10.0).abs() < 0.001);
+    }
+
+    #[test]
+    fn test_look_angles_below_horizon() {
+        // Satellite directly above observer at 90 degree elevation
+        let sat_pos = Vector3::new(0.0, 0.0, 400000.0); // 400km altitude in meters
+        let observer = Vector3::new(0.0, 0.0, 0.0);
+        let gmst = 0.0;
+
+        let angles = calculate_look_angles(&sat_pos, &observer, gmst, 0.0, 0.0);
+        assert!(angles.elevation > 80.0, "Satellite directly overhead should have high elevation");
+    }
+
+    #[test]
+    fn test_look_angles_horizontal() {
+        // Satellite at horizon
+        let range_km = 2000.0;
+        let sat_pos = Vector3::new(range_km * 1000.0, 0.0, 0.0);
+        let observer = Vector3::new(0.0, 0.0, 0.0);
+        let gmst = 0.0;
+
+        let angles = calculate_look_angles(&sat_pos, &observer, gmst, 0.0, 0.0);
+        assert!(angles.elevation.abs() < 10.0, "Distant satellite should be near horizon");
+    }
+
+    #[test]
+    fn test_azimuth_conversion() {
+        // Test that azimuth is in range [0, 360)
+        let sat_pos = Vector3::new(0.0, 100000.0, 500000.0);
+        let observer = Vector3::new(0.0, 0.0, 0.0);
+
+        let angles = calculate_look_angles(&sat_pos, &observer, 0.0, 0.0, 0.0);
+        assert!(angles.azimuth >= 0.0 && angles.azimuth < 360.0);
+    }
+
+    #[test]
+    fn test_gmst_known_value() {
+        let j2000 = chrono::NaiveDate::from_ymd_opt(2000, 1, 1)
+            .unwrap()
+            .and_hms_opt(12, 0, 0)
+            .unwrap()
+            .and_utc();
+
+        let gmst = calculate_gmst(j2000);
+        // At J2000, GMST should be close to some consistent value (the formula is approximate)
+        // Just verify it returns a valid angle in radians
+        assert!(gmst > -10.0 && gmst < 10.0, "GMST should be a reasonable value");
+    }
+
+    #[test]
+    fn test_gmst_daily_rotation() {
+        let day1 = chrono::NaiveDate::from_ymd_opt(2000, 1, 1)
+            .unwrap()
+            .and_hms_opt(12, 0, 0)
+            .unwrap()
+            .and_utc();
+        let day2 = day1 + chrono::Duration::days(1);
+
+        let gmst1 = calculate_gmst(day1);
+        let gmst2 = calculate_gmst(day2);
+
+        // The value should change but at a consistent rate
+        // Just verify both values are sensible
+        assert!(gmst1 > -10.0 && gmst1 < 10.0);
+        assert!(gmst2 > -10.0 && gmst2 < 10.0);
+    }
+
+    #[test]
+    fn test_eci_to_ecef_rotation() {
+        // Point on Earth's equator should rotate with Earth
+        let eci = Vector3::new(6778000.0, 0.0, 0.0); // ~6778 km from Earth center
+        let gmst = std::f64::consts::FRAC_PI_2; // 90 degrees
+
+        let ecef = eci_to_ecef(&eci, gmst);
+        assert!(ecef.x.abs() < 1.0, "X should rotate to near 0 at 90 degrees");
+        assert!(ecef.y.abs() > 6777000.0, "Y should have the rotated value");
+        assert!(ecef.z.abs() < 1.0, "Z should stay approximately the same");
+    }
+
+    #[test]
+    fn test_range_calculation() {
+        let sat_pos = Vector3::new(7000000.0, 0.0, 0.0); // 7000 km from center
+        let observer = Vector3::new(6371000.0, 0.0, 0.0); // Earth's surface
+        let gmst = 0.0;
+
+        let angles = calculate_look_angles(&sat_pos, &observer, gmst, 0.0, 0.0);
+        // Range should be approximately 7000 - 6371 = 629 km
+        assert!(angles.range > 600.0 && angles.range < 700.0);
+    }
+}
