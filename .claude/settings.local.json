@@ -16,7 +16,8 @@
       "Bash(gh pr *)",
       "Bash(gh api *)",
       "Bash(jq *)",
-      "Bash(cargo test *)"
+      "Bash(cargo test *)",
+      "Bash(python3 -c \"import json,sys; comments = json.load\\(sys.stdin\\); [print\\(f'File: {c[\\\\\"path\\\\\"]}\\\\nLine: {c.get\\(\\\\\"line\\\\\",\\\\\"N/A\\\\\"\\)}\\\\nComment: {c[\\\\\"body\\\\\"]}\\\\n---'\\) for c in comments]\")"
     ]
   }
 }

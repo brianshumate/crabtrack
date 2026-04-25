@@ -1264,9 +1264,9 @@ pub fn draw_utility_menu(f: &mut Frame, app_state: &AppState) {
         };
 
         let label = if total_bytes > 0 {
-            format!("{} / {} KB", bytes_received / 1024, total_bytes / 1024)
+            format!("{:.1} / {:.1} KB", bytes_received as f64 / 1024.0, total_bytes as f64 / 1024.0)
         } else {
-            format!("{} KB received", bytes_received / 1024)
+            format!("{:.1} KB received", bytes_received as f64 / 1024.0)
         };
 
         let gauge = Gauge::default()

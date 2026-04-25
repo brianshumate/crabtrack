@@ -122,6 +122,7 @@ pub struct UtilityMenuState {
     pub status_message: Option<String>,
     pub downloaded_count: Option<usize>,
     pub download_progress: Option<Arc<Mutex<DownloadProgress>>>,
+    pub download_handle: Option<std::thread::JoinHandle<()>>,
 }
 
 impl UtilityMenuState {
@@ -132,6 +133,7 @@ impl UtilityMenuState {
             status_message: None,
             downloaded_count: None,
             download_progress: None,
+            download_handle: None,
         }
     }
 
@@ -141,6 +143,7 @@ impl UtilityMenuState {
         self.status_message = None;
         self.downloaded_count = None;
         self.download_progress = None;
+        self.download_handle = None;
     }
 }
 
@@ -372,7 +375,20 @@ fn main() -> Result<()> {
         .collect();
 
     let tle_file = args.tle.unwrap_or_else(|| config.satellites.tle_file.clone());
-    let tle_data = fs::read_to_string(&tle_file)?;
+
+    let tle_data = if tle_file.exists() {
+        fs::read_to_string(&tle_file)?
+    } else {
+        println!("No TLE file found at '{}', downloading from Celestrak...", tle_file.display());
+        if let Some(parent) = tle_file.parent() {
+            std::fs::create_dir_all(parent)?;
+        }
+        let tle_data = download_all_groups()?;
+        fs::write(&tle_file, &tle_data)?;
+        println!("TLE file saved to '{}'", tle_file.display());
+        tle_data
+    };
+
     let mut satellites = parse_multiple_tles(&tle_data, &config)?;
 
     // Predict passes for all satellites
@@ -465,6 +481,11 @@ fn main() -> Result<()> {
 
     // Run TUI
     let res = run_app(&mut terminal, &mut app_state);
+
+    // Join any in-progress download thread before restoring the terminal
+    if let Some(handle) = app_state.utility_menu_state.download_handle.take() {
+        let _ = handle.join();
+    }
 
     // Restore terminal
     disable_raw_mode()?;
@@ -816,6 +837,9 @@ fn run_app(
                     if let Some(download_result) = finished {
                         let source_name = TLE_SOURCES[app_state.utility_menu_state.selected_index].name;
                         app_state.utility_menu_state.download_progress = None;
+                        if let Some(handle) = app_state.utility_menu_state.download_handle.take() {
+                            let _ = handle.join();
+                        }
                         match download_result {
                             Ok(tle_data) => {
                                 match parse_and_store_tles(&tle_data, &app_state.database, source_name) {
@@ -1017,11 +1041,12 @@ fn handle_utility_menu_input(app_state: &mut AppState, key: KeyCode) -> Result<(
                     state.download_progress = Some(Arc::clone(&progress));
 
                     let group = source.group.to_string();
-                    std::thread::spawn(move || {
+                    let handle = std::thread::spawn(move || {
                         let result = download_tle_from_celestrak(&group, Arc::clone(&progress));
                         let mut prog = progress.lock().unwrap();
                         prog.result = Some(result.map_err(|e| e.to_string()));
                     });
+                    state.download_handle = Some(handle);
                 }
                 _ => {}
             }
@@ -1040,7 +1065,7 @@ fn handle_utility_menu_input(app_state: &mut AppState, key: KeyCode) -> Result<(
 }
 
 /// Download TLE data from Celestrak, reporting byte progress via shared state
-fn download_tle_from_celestrak(group: &str, progress: Arc<Mutex<DownloadProgress>>) -> Result<String> {
+fn download_tle_from_celestrak(group: &str, _progress: Arc<Mutex<DownloadProgress>>) -> Result<String> {
     use std::io::Read;
 
     let url = format!(
@@ -1060,14 +1085,41 @@ fn download_tle_from_celestrak(group: &str, progress: Arc<Mutex<DownloadProgress
         ));
     }
 
-    let total_bytes = response
-        .header("content-length")
-        .and_then(|v| v.parse::<u64>().ok())
-        .unwrap_or(0);
+    let mut reader = response.into_reader();
+    let mut body: Vec<u8> = Vec::new();
+    let mut chunk = [0u8; 8192];
 
-    {
-        let mut prog = progress.lock().unwrap();
-        prog.total_bytes = total_bytes;
+    loop {
+        let n = reader
+            .read(&mut chunk)
+            .map_err(|e| anyhow::anyhow!("Failed to read response: {}", e))?;
+        if n == 0 {
+            break;
+        }
+        body.extend_from_slice(&chunk[..n]);
+    }
+
+    String::from_utf8(body).map_err(|e| anyhow::anyhow!("Response not valid UTF-8: {}", e))
+}
+
+fn download_tle_from_celestrak_sync(group: &str) -> Result<String> {
+    use std::io::Read;
+
+    let url = format!(
+        "https://celestrak.org/NORAD/elements/gp.php?GROUP={}&FORMAT=tle",
+        group
+    );
+
+    let response = ureq::get(&url)
+        .timeout(std::time::Duration::from_secs(30))
+        .call()
+        .map_err(|e| anyhow::anyhow!("HTTP request failed: {}", e))?;
+
+    if response.status() != 200 {
+        return Err(anyhow::anyhow!(
+            "Celestrak returned status: {}",
+            response.status()
+        ));
     }
 
     let mut reader = response.into_reader();
@@ -1082,11 +1134,37 @@ fn download_tle_from_celestrak(group: &str, progress: Arc<Mutex<DownloadProgress
             break;
         }
         body.extend_from_slice(&chunk[..n]);
-        let mut prog = progress.lock().unwrap();
-        prog.bytes_received = body.len() as u64;
     }
 
     String::from_utf8(body).map_err(|e| anyhow::anyhow!("Response not valid UTF-8: {}", e))
+}
+
+fn download_all_groups() -> Result<String> {
+    let groups = ["stations", "amateur", "cubesat", "visual", "weather", "noaa", "gps-ops", "starlink"];
+    let mut all_data = String::new();
+
+    for group in groups {
+        print!("Downloading {} TLEs... ", group);
+        match download_tle_from_celestrak_sync(group) {
+            Ok(data) => {
+                let count = data.lines().count() / 3;
+                println!("{} entries", count);
+                if !data.trim().is_empty() {
+                    all_data.push_str(&data);
+                    all_data.push('\n');
+                }
+            }
+            Err(e) => {
+                println!("failed: {}", e);
+            }
+        }
+    }
+
+    if all_data.trim().is_empty() {
+        return Err(anyhow::anyhow!("Failed to download TLE data from any group"));
+    }
+
+    Ok(all_data)
 }
 
 /// Parse TLE data and store satellites in database
